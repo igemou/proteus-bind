@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+env/
+logs
+venv/
+.DS_Store
+*.logs
+*.log
+checkpoints/
+lightning_logs/
+.vscode/
+.env
+preprocessing
+*.csv
+../.DS_Store
