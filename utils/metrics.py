@@ -43,8 +43,7 @@ def functional_metrics(y_true, y_pred):
 
     # Spearman
     rho, _ = spearmanr(y_true, y_pred)
-    if np.isnan(rho):
-        rho = 0.0
+    rho = 0.0 if np.isnan(rho) else float(rho)
 
     # MAE
     mae = np.mean(np.abs(y_true - y_pred))

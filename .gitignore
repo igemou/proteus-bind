@@ -14,4 +14,7 @@ lightning_logs/
 preprocessing
 *.csv
 ../.DS_Store
-*.pkl
+data/HNRNPC/*.tsv
+data/HNRNPC/*eclip.txt
+data/HNRNPC/*label.pkl
+data/HNRNPC/*split.pkl
