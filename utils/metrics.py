@@ -12,9 +12,21 @@ def binding_metrics(y_true, y_pred):
     y_true = y_true.detach().cpu().numpy().ravel()
     y_prob = y_pred.detach().cpu().numpy().ravel()
     y_hat = (y_prob > 0.5).astype(int)
-    auroc = roc_auc_score(y_true, y_prob)
-    auprc = average_precision_score(y_true, y_prob)
-    f1 = f1_score(y_true, y_hat)
+
+    try:
+        auroc = roc_auc_score(y_true, y_prob)
+    except:
+        auroc = 0.0
+
+    try:
+        auprc = average_precision_score(y_true, y_prob)
+    except:
+        auprc = 0.0
+
+    try:
+        f1 = f1_score(y_true, y_hat)
+    except:
+        f1 = 0.0
     
     return {
         "AUROC": auroc,
