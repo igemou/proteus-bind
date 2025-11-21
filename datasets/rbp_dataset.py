@@ -1,8 +1,7 @@
 import pickle
 import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader
-
+from torch.utils.data import Dataset
 
 def one_hot_encode(seq, alphabet="ACGU"):
     mapping = {c: i for i, c in enumerate(alphabet)}
@@ -12,149 +11,178 @@ def one_hot_encode(seq, alphabet="ACGU"):
             arr[i, mapping[ch]] = 1.0
     return arr
 
-
 class RBPDataset(Dataset):
     """
-    One dataset for a single RBP.
+    Unified dataset loader.
+      - MODE 1: single-RBP training with cross-RBP negatives (multi_RBP=False)
+      - MODE 2: multi-RBP training (multi_RBP=True)
 
-    split_file: pickle with (data, bind_labels)
-        - data[i] = [eclip_seq (str), (rbns_seq (str), rbns_aff (1D array-like))]
-        - bind_labels[i] = 0 or 1
+    if multi_RBP = True  (MODE 2):
+        - For each RBP:
+            data: mixed pos+neg examples from its split file
+        - y_bind: original bind label (0/1)
+        - y_func: per-RBP functional vector
+          (pos_vec for y=1, neg_vec for y=0)
+        - rbp_id: identifies which RBP this example belongs to
 
-    pos_label_file / neg_label_file:
-        - each is a pickle: (rbp_name, expr_vector)
-        - we take expr_vector, average it to a scalar regression target
+    else multi_RBP = False (MODE 1, single-RBP):
+        - target_rbp_id = index of RBP we are training on (A)
+        - positives = all positive examples (y=1) from target RBP A
+        - negatives = positive examples (y=1) from ALL OTHER RBPs (B, C, ...)
+                      relabeled as negative (0) for A
+        - All examples use rbp_id = target_rbp_id so the model
+          is “conditioning” on RBP A only.
     """
 
-    def __init__(self, split_file, pos_label_file, neg_label_file, rbp_id=0):
-        self.rbp_id = rbp_id
+    def __init__(
+        self,
+        all_split_files,
+        all_pos_label_files,
+        all_neg_label_files,
+        target_rbp_id=None,
+        multi_RBP=True,
+    ):
+        self.multi_RBP = multi_RBP
+        self.target_rbp_id = target_rbp_id
+        self.all_data = []
 
-        with open(split_file, "rb") as f:
-            self.data, self.bind_labels = pickle.load(f)
+        for rbp_id, (split_file, pos_file, neg_file) in enumerate(
+            zip(all_split_files, all_pos_label_files, all_neg_label_files)
+        ):
+            with open(split_file, "rb") as f:
+                data, labels = pickle.load(f)
 
-        assert len(self.data) == len(self.bind_labels), \
-            "data and bind_labels must have the same length"
+            with open(pos_file, "rb") as f:
+                _, pos_vec = pickle.load(f)
+            with open(neg_file, "rb") as f:
+                _, neg_vec = pickle.load(f)
 
-        uniq = set(self.bind_labels)
-        assert uniq.issubset({0, 1}), f"Non-binary binding labels detected: {uniq}"
+            pos_vec = torch.tensor(pos_vec, dtype=torch.float32)
+            neg_vec = torch.tensor(neg_vec, dtype=torch.float32)
 
-        with open(pos_label_file, "rb") as f:
-            _, pos_expr = pickle.load(f)
-        with open(neg_label_file, "rb") as f:
-            _, neg_expr = pickle.load(f)
+            # data: list of (eclip_seq, (rbns_seq, rbns_aff))
+            # labels: list/array of bind labels (0/1)
+            self.all_data.append((data, labels, pos_vec, neg_vec, rbp_id))
 
-        self.pos_expr_vec = torch.tensor(pos_expr, dtype=torch.float32)  # (G,)
-        self.neg_expr_vec = torch.tensor(neg_expr, dtype=torch.float32)  # (G,)
+        if self.multi_RBP:
+            self.data = []
+            self.labels = []
+            self.rbp_ids = []
+            self.func_vecs = []
 
-        self._printed_debug = False
+            for (data, labels, pos_vec, neg_vec, rbp_id) in self.all_data:
+                for seq_item, y in zip(data, labels):
+                    self.data.append(seq_item)
+                    self.labels.append(float(y))
+                    self.rbp_ids.append(rbp_id)
+                    self.func_vecs.append(pos_vec if y == 1 else neg_vec)
+
+            return  
+
+        assert target_rbp_id is not None, "Must specify target_rbp_id in single-RBP mode"
+
+        # Take the target RBP A
+        A_data, A_labels, A_pos_vec, A_neg_vec, _ = self.all_data[target_rbp_id]
+
+        # positives = A_pos
+        positives = [
+            (item, 1, target_rbp_id, A_pos_vec)
+            for item, y in zip(A_data, A_labels)
+            if y == 1
+        ]
+
+        # negatives = positives from other RBPs
+        negatives = []
+        for (data, labels, pos_vec, neg_vec, rbp_id) in self.all_data:
+            if rbp_id == target_rbp_id:
+                continue
+            for item, y in zip(data, labels):
+                if y == 1:  # positive from RBP_B etc.
+                    negatives.append((item, 0, target_rbp_id, A_neg_vec))
+
+        print(
+            f"[Single-RBP mode] RBP {target_rbp_id}: "
+            f"{len(positives)} positives, {len(negatives)} negatives (from other RBPs)."
+        )
+
+        merged = positives + negatives
+
+        self.data = [x[0] for x in merged]   # seq_item
+        self.labels = [x[1] for x in merged]
+        self.rbp_ids = [x[2] for x in merged]
+        self.func_vecs = [x[3] for x in merged]
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        # eCLIP + RBNS
         eclip_seq = self.data[idx][0]
+
+        # convert DNA → RNA
+        eclip_seq = eclip_seq.replace("T", "U")
+
         rbns_seq, rbns_aff = self.data[idx][1]
 
-        # one-hot encode eCLIP
-        seq_oh = torch.tensor(one_hot_encode(eclip_seq), dtype=torch.float32)   # (L, 4)
+        seq_oh = torch.tensor(one_hot_encode(eclip_seq), dtype=torch.float32)
+        rbns_aff = torch.tensor(rbns_aff, dtype=torch.float32)
 
-        # RBNS affinity → 1D tensor
-        rbns_aff = torch.tensor(rbns_aff, dtype=torch.float32)                  # (D,)
+        y_bind = torch.tensor([self.labels[idx]], dtype=torch.float32)
+        y_func = self.func_vecs[idx].mean().unsqueeze(0)
 
-        # binding label
-        bind_label = torch.tensor([float(self.bind_labels[idx])], dtype=torch.float32)  # (1,)
-
-        # functional scalar = mean log2FC of positive or negative KD vector
-        func_vec = self.pos_expr_vec if bind_label.item() == 1.0 else self.neg_expr_vec
-        func_scalar = func_vec.mean().unsqueeze(0)  # (1,)
-
-        if not self._printed_debug:
-            print("==== Dataset Debug ====")
-            print("seq_oh:", seq_oh.shape)
-            print("rbns_aff:", rbns_aff.shape)
-            print("bind_label:", bind_label, bind_label.shape)
-            print("func_scalar:", func_scalar, func_scalar.shape)
-            print("rbp_id:", self.rbp_id)
-            print("==================================")
-            self._printed_debug = True
+        # Next-token (now safe)
+        alphabet = "ACGU"
+        base_to_idx = {c: i for i, c in enumerate(alphabet)}
+        last_base = eclip_seq[-1]
+        y_next = torch.tensor(base_to_idx[last_base], dtype=torch.long)
 
         return (
-            seq_oh,                                   # (L, 4)
-            rbns_aff,                                 # (D,)
-            torch.tensor(self.rbp_id, dtype=torch.long),  # scalar
-            bind_label,                               # (1,)
-            func_scalar                               # (1,)
+            seq_oh, rbns_aff,
+            torch.tensor(self.rbp_ids[idx], dtype=torch.long),
+            y_bind, y_func, y_next
         )
 
 
-def make_collate_fn(motif_dim):
+
+
+def make_collate_fn(motif_dim: int):
     """
     Returns a collate_fn that:
-    - pads sequences in time dimension
-    - pads RBNS vectors to a fixed global motif_dim
+      - pads one-hot RNA sequences in a batch to the same length
+      - pads/truncates RBNS affinity vectors to motif_dim
+      - stacks binding, functional, next-base labels
     """
 
-    def collate_fn(batch):
-        # batch[i] = (seq_oh, rbns_aff, rbp_id, bind_label, func_scalar)
-        seqs, rbns_vecs, rbp_ids, bind_labels, func_labels = zip(*batch)
+    def collate(batch):
+        seqs, rbns_vecs, rbp_ids, y_binds, y_funcs, y_nexts = zip(*batch)
 
-        lengths = [x.size(0) for x in seqs]
-        max_len = max(lengths)
+        batch_size = len(seqs)
+        max_len = max(s.shape[0] for s in seqs)
+        seq_width = seqs[0].shape[1]  # should be 4
 
-        padded_seqs = []
-        for seq in seqs:
-            pad_len = max_len - seq.size(0)
-            if pad_len > 0:
-                pad = torch.zeros(pad_len, seq.size(1))
-                seq = torch.cat([seq, pad], dim=0)
-            padded_seqs.append(seq)
+        # Pad sequences
+        seq_batch = torch.zeros(batch_size, max_len, seq_width, dtype=torch.float32)
+        for i, s in enumerate(seqs):
+            L = s.shape[0]
+            seq_batch[i, :L, :] = s
 
-        seqs = torch.stack(padded_seqs)  # (B, L, 4)
+        # Pad RBNS vectors
+        rbns_batch = torch.zeros(batch_size, motif_dim, dtype=torch.float32)
+        for i, v in enumerate(rbns_vecs):
+            L = min(len(v), motif_dim)
+            rbns_batch[i, :L] = v[:L]
 
-        padded_rbns = []
-        for v in rbns_vecs:
-            pad = motif_dim - v.size(0)
-            if pad < 0:
-                v = v[:motif_dim]
-                pad = 0
-            if pad > 0:
-                v = torch.cat([v, torch.zeros(pad)], dim=0)
-            padded_rbns.append(v)
-
-        rbns_vecs = torch.stack(padded_rbns)  # (B, motif_dim)
+        rbp_ids_tensor = torch.stack(rbp_ids, dim=0)     # (B,)
+        y_bind_batch = torch.stack(y_binds, dim=0)       # (B,1)
+        y_func_batch = torch.stack(y_funcs, dim=0)       # (B,1)
+        y_next_batch = torch.stack(y_nexts, dim=0)       # (B,)
 
         return (
-            seqs,
-            rbns_vecs,
-            torch.stack(rbp_ids).long(),      # (B,)
-            torch.stack(bind_labels),         # (B, 1)
-            torch.stack(func_labels)          # (B, 1)
+            seq_batch,
+            rbns_batch,
+            rbp_ids_tensor,
+            y_bind_batch,
+            y_func_batch,
+            y_next_batch,
         )
 
-    return collate_fn
-
-
-def make_loader(split_file, pos_label_file, neg_label_file,
-                rbp_id=0, batch_size=16, shuffle=True):
-    """
-    Simple per-RBP loader (not used in multi-RBP training, but kept for convenience).
-    """
-    dataset = RBPDataset(
-        split_file=split_file,
-        pos_label_file=pos_label_file,
-        neg_label_file=neg_label_file,
-        rbp_id=rbp_id
-    )
-
-    max_len = 0
-    for _, (_, rbns_aff) in dataset.data:
-        max_len = max(max_len, len(rbns_aff))
-    collate_fn = make_collate_fn(max_len)
-
-    return DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        collate_fn=collate_fn
-    )
+    return collate
