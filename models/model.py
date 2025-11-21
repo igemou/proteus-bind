@@ -56,6 +56,17 @@ class FunctionalHead(nn.Module):
     def forward(self, h):
         return self.net(h)
 
+class NextBaseHead(nn.Module):
+    def __init__(self, hidden=128):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(hidden, 64),
+            nn.ReLU(),
+            nn.Linear(64, 4)  # 4 nucleotide classes A, C, G, U
+        )
+
+    def forward(self, h):
+        return self.net(h)   # raw logits
 
 class ProteusModel(nn.Module):
     def __init__(self, hidden=128, motif_dim=0, num_rbps=1, rbp_emb_dim=32):
@@ -67,6 +78,7 @@ class ProteusModel(nn.Module):
         self.fusion = Fusion(hidden, rbp_emb_dim, motif_dim)
         self.bind_head = BindingHead(hidden)
         self.func_head = FunctionalHead(hidden)
+        self.next_base_head = NextBaseHead(hidden)
 
     def forward(self, seq, motif=None, rbp_id=None):
         h_seq = self.encoder(seq)
@@ -77,7 +89,10 @@ class ProteusModel(nn.Module):
 
         h_rbp = self.rbp_embed(rbp_id)
 
-        h = torch.cat([h_seq, h_rbp], dim=-1)
         h = self.fusion(h_seq, h_rbp, motif)
 
-        return self.bind_head(h), self.func_head(h)
+        bind_pred = self.bind_head(h)
+        func_pred = self.func_head(h)
+        next_base_logits = self.next_base_head(h)
+
+        return bind_pred, func_pred, next_base_logits
