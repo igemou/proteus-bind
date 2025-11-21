@@ -52,3 +52,20 @@ def functional_metrics(y_true, y_pred):
         "Spearman": rho,
         "MAE": mae
     }
+
+def next_base_metrics(y_true, y_pred_logits):
+    """
+    CrossEntropyLoss, accuracy
+    """
+    y_true = y_true.detach().cpu()            # (B,)
+    logits = y_pred_logits.detach().cpu()     # (B, 4)
+
+    ce_loss = torch.nn.functional.cross_entropy(logits, y_true).item()
+
+    pred_class = logits.argmax(dim=-1)         # (B,)
+    acc = (pred_class == y_true).float().mean().item()
+
+    return {
+        "Next_CE": ce_loss,
+        "Next_Acc": acc
+    }
