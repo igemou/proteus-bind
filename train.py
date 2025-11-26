@@ -21,8 +21,9 @@ def train_one_epoch(
 
     pbar = tqdm(loader, desc="Training", leave=False)
 
-    for seq, rbns_vec, rbp_ids, bind_label, func_label, next_label in pbar:
+    for seq, rbns, rbns_vec, rbp_ids, bind_label, func_label, next_label in pbar:
         seq = seq.to(device)
+        rbns = rbns.to(device)
         rbns_vec = rbns_vec.to(device)
         rbp_ids = rbp_ids.to(device)
         bind_label = bind_label.to(device)
@@ -30,7 +31,7 @@ def train_one_epoch(
         next_label = next_label.to(device)
 
         # Forward: model returns binding, functional, and next-base logits
-        pred_b, pred_f, pred_next = model(seq, motif=rbns_vec, rbp_id=rbp_ids)
+        pred_b, pred_f, pred_next = model(seq, motif=rbns, rbp_id=rbp_ids)
 
         # Multitask loss (binding + optional functional + optional next-base)
         loss, Lb, Lf, Ln = multitask_loss(
@@ -63,15 +64,16 @@ def evaluate(model, loader, device):
     all_true_f, all_pred_f = [], []
     all_true_next, all_pred_next = [], []
 
-    for seq, rbns_vec, rbp_ids, bind_label, func_label, next_label in loader:
+    for seq, rbns, rbns_vec, rbp_ids, bind_label, func_label, next_label in loader:
         seq = seq.to(device)
+        rbns = rbns.to(device)
         rbns_vec = rbns_vec.to(device)
         rbp_ids = rbp_ids.to(device)
         bind_label = bind_label.to(device)
         func_label = func_label.to(device)
         next_label = next_label.to(device)
 
-        pred_b, pred_f, pred_next = model(seq, motif=rbns_vec, rbp_id=rbp_ids)
+        pred_b, pred_f, pred_next = model(seq, motif=rbns, rbp_id=rbp_ids)
 
         all_true_b.append(bind_label.cpu())
         all_pred_b.append(pred_b.cpu())
@@ -195,7 +197,7 @@ def train(
     # num_rbps = total RBPs (consistent in both modes)
     model = ProteusModel(
         hidden=128,
-        motif_dim=motif_dim,
+        motif_dim=64,
         num_rbps=num_rbps,
         rbp_emb_dim=32,
     ).to(device)
