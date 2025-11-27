@@ -27,14 +27,15 @@ def evaluate(model, loader, device="cpu", has_next_head=True):
 
     all_true_next, all_pred_next = [], [] if has_next_head else (None, None)
 
-    for seq, rbns_vec, rbp_ids, bind_label, func_label, next_label in loader:
+    for seq, rbns, rbns_vec, rbp_ids, bind_label, func_label, next_label in loader:
         seq = seq.to(device)
+        rbns = rbns.to(device)
         rbns_vec = rbns_vec.to(device)
         rbp_ids = rbp_ids.to(device)
         bind_label = bind_label.to(device)
         func_label = func_label.to(device)
         next_label = next_label.to(device)
-        out = model(seq, motif=rbns_vec, rbp_id=rbp_ids)
+        out = model(seq, motif=rbns, rbp_id=rbp_ids)
 
         if has_next_head:
             pred_b, pred_f, pred_next = out
@@ -152,7 +153,7 @@ if __name__ == "__main__":
     eval_loader = make_eval_loader(eval_datasets, args.batch, motif_dim)
     model = ProteusModel(
         hidden=128,
-        motif_dim=motif_dim,
+        motif_dim=64,
         num_rbps=num_rbps,
         rbp_emb_dim=32,
     ).to(device)
