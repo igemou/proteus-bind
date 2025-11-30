@@ -69,10 +69,11 @@ class NextBaseHead(nn.Module):
         return self.net(h)   # raw logits
 
 class ProteusModel(nn.Module):
-    def __init__(self, hidden=128, motif_dim=0, num_rbps=1, rbp_emb_dim=32):
+    def __init__(self, hidden=128, motif_dim=64, num_rbps=1, rbp_emb_dim=32):
         super().__init__()
 
-        self.encoder = TransformerEncoder(hidden=hidden)
+        self.seq_encoder = TransformerEncoder(hidden=hidden)
+        self.rbns_encoder = TransformerEncoder(hidden=motif_dim)
         self.rbp_embed = nn.Embedding(num_rbps, rbp_emb_dim)
 
         self.fusion = Fusion(hidden, rbp_emb_dim, motif_dim)
@@ -81,7 +82,8 @@ class ProteusModel(nn.Module):
         self.next_base_head = NextBaseHead(hidden)
 
     def forward(self, seq, motif=None, rbp_id=None):
-        h_seq = self.encoder(seq)
+        h_seq = self.seq_encoder(seq)
+        h_rbns = self.rbns_encoder(motif)
 
         # default: single RBP
         if rbp_id is None:
@@ -89,7 +91,7 @@ class ProteusModel(nn.Module):
 
         h_rbp = self.rbp_embed(rbp_id)
 
-        h = self.fusion(h_seq, h_rbp, motif)
+        h = self.fusion(h_seq, h_rbp, h_rbns)
 
         bind_pred = self.bind_head(h)
         func_pred = self.func_head(h)

@@ -124,6 +124,7 @@ class RBPDataset(Dataset):
         rbns_seq, rbns_aff = self.data[idx][1]
 
         seq_oh = torch.tensor(one_hot_encode(eclip_seq), dtype=torch.float32)
+        rbns_oh = torch.tensor(one_hot_encode(rbns_seq), dtype=torch.float32)
         rbns_aff = torch.tensor(rbns_aff, dtype=torch.float32)
 
         y_bind = torch.tensor([self.labels[idx]], dtype=torch.float32)
@@ -136,7 +137,7 @@ class RBPDataset(Dataset):
         y_next = torch.tensor(base_to_idx[last_base], dtype=torch.long)
 
         return (
-            seq_oh, rbns_aff,
+            seq_oh, rbns_oh, rbns_aff,
             torch.tensor(self.rbp_ids[idx], dtype=torch.long),
             y_bind, y_func, y_next
         )
@@ -153,7 +154,7 @@ def make_collate_fn(motif_dim: int):
     """
 
     def collate(batch):
-        seqs, rbns_vecs, rbp_ids, y_binds, y_funcs, y_nexts = zip(*batch)
+        seqs, rbns, rbns_vecs, rbp_ids, y_binds, y_funcs, y_nexts = zip(*batch)
 
         batch_size = len(seqs)
         max_len = max(s.shape[0] for s in seqs)
@@ -164,12 +165,18 @@ def make_collate_fn(motif_dim: int):
         for i, s in enumerate(seqs):
             L = s.shape[0]
             seq_batch[i, :L, :] = s
+            
+        # Pad RBNS sequences
+        rbns_seq_batch = torch.zeros(batch_size, max_len, seq_width, dtype=torch.float32)
+        for i, s in enumerate(rbns):
+            L = s.shape[0]
+            rbns_seq_batch[i, :L, :] = s
 
         # Pad RBNS vectors
-        rbns_batch = torch.zeros(batch_size, motif_dim, dtype=torch.float32)
+        rbns_aff_batch = torch.zeros(batch_size, motif_dim, dtype=torch.float32)
         for i, v in enumerate(rbns_vecs):
             L = min(len(v), motif_dim)
-            rbns_batch[i, :L] = v[:L]
+            rbns_aff_batch[i, :L] = v[:L]
 
         rbp_ids_tensor = torch.stack(rbp_ids, dim=0)     # (B,)
         y_bind_batch = torch.stack(y_binds, dim=0)       # (B,1)
@@ -178,7 +185,8 @@ def make_collate_fn(motif_dim: int):
 
         return (
             seq_batch,
-            rbns_batch,
+            rbns_seq_batch,
+            rbns_aff_batch,
             rbp_ids_tensor,
             y_bind_batch,
             y_func_batch,
