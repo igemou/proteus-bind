@@ -138,24 +138,49 @@ if __name__ == "__main__":
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    test_files = [s.strip() for s in args.test.split(",")]
-    pos_files = [s.strip() for s in args.pos_label.split(",")]
-    neg_files = [s.strip() for s in args.neg_label.split(",")]
+#     test_files = [s.strip() for s in args.test.split(",")]
+#     pos_files = [s.strip() for s in args.pos_label.split(",")]
+#     neg_files = [s.strip() for s in args.neg_label.split(",")]
 
-    eval_datasets = build_eval_datasets(test_files, pos_files, neg_files)
+#     eval_datasets = build_eval_datasets(test_files, pos_files, neg_files)
 
-    motif_dim = compute_motif_dim(eval_datasets)
-    num_rbps = len(eval_datasets)
+#     motif_dim = compute_motif_dim(eval_datasets)
+#     num_rbps = len(eval_datasets)
 
+#     print(f"> motif_dim = {motif_dim}")
+#     print(f"> num_rbps = {num_rbps}")
+
+#     eval_loader = make_eval_loader(eval_datasets, args.batch, motif_dim)
+    
+    test_files = [x.strip() for x in args.test.split(",")]
+    pos_label_files = [x.strip() for x in args.pos_label.split(",")]
+    neg_label_files = [x.strip() for x in args.neg_label.split(",")]
+    test_dataset = RBPDataset(
+        all_split_files=test_files,
+        all_pos_label_files=pos_label_files,
+        all_neg_label_files=neg_label_files,
+        target_rbp_id=None,
+        multi_RBP=True,
+    )
+    
+    motif_dim = compute_motif_dim([test_dataset])
+    num_rbps = len(test_files)
     print(f"> motif_dim = {motif_dim}")
     print(f"> num_rbps = {num_rbps}")
-
-    eval_loader = make_eval_loader(eval_datasets, args.batch, motif_dim)
+    
+    collate_fn = make_collate_fn(motif_dim)
+    eval_loader = DataLoader(
+        test_dataset,
+        batch_size=args.batch,
+        shuffle=False,
+        collate_fn=collate_fn,
+    )
+    
     model = ProteusModel(
-        hidden=128,
-        motif_dim=64,
+        hidden=64,
+        motif_dim=32,
         num_rbps=num_rbps,
-        rbp_emb_dim=32,
+        rbp_emb_dim=8,
     ).to(device)
 
     print(f"Loading checkpoint: {args.model}")
