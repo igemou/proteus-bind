@@ -94,7 +94,7 @@ def evaluate(model, loader, device):
     results = {}
     results.update(binding_metrics(yb, pb))
     results.update(functional_metrics(yf, pf))
-    results.update(next_base_metrics(yn, pn))  # <-- NEW
+    results.update(next_base_metrics(yn, pn)) 
 
     return results
 
