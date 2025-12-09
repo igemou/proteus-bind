@@ -34,6 +34,8 @@ data/PCBP1/*.tsv
 data/PCBP1/*eclip.txt
 data/PCBP1/*label.pkl
 data/PCBP1/*split.pkl
+PrismNet/data/clip_data*
+PrismNet/data/PrismNet
 figs
 interpret_outputs
 interpret_plots
